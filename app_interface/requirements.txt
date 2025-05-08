@@ -1,0 +1,13 @@
+accelerate
+gradio==5.26.0
+numpy
+transformers
+trimesh
+ipywidgets
+jupyter
+socksio
+scipy
+safetensors
+accelerate
+bitsandbytes
+gguf
