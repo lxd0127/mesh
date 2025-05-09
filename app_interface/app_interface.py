@@ -124,12 +124,91 @@ def apply_gray_wireframe(mesh_text):
     Returns:
         str: GLB文件路径
     """
+    # 解析OBJ文本数据
+    vertices = []
+    faces = []
+    original_lines = mesh_text.strip().split('\n')
+    valid_lines = []
+
+    for line in original_lines:
+        parts = line.strip().split()
+        if not parts:
+            continue
+        if parts[0] == 'v':
+            vertices.append(parts)
+            valid_lines.append(line) # 保留顶点行
+        elif parts[0] == 'f':
+            faces.append(parts)
+        else:
+            valid_lines.append(line) # 保留其他类型的行
+
+    num_vertices = len(vertices)
+    
+    valid_faces_count = 0
+    problematic_faces_indices = []
+
+    for i, face_parts in enumerate(faces):
+        face_indices = []
+        valid_face = True
+        for part in face_parts[1:]:
+            # OBJ索引从1开始，需要转换为0开始的索引进行比较
+            # 同时处理 "f v1 v2 v3" 和 "f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3" 等格式
+            index_str = part.split('/')[0]
+            try:
+                idx = int(index_str)
+                if not (1 <= idx <= num_vertices): # 检查索引是否在有效范围内 (1到num_vertices)
+                    valid_face = False
+                    break
+                face_indices.append(idx)
+            except ValueError:
+                # 如果索引部分不是纯数字（例如纹理或法线索引存在但顶点索引缺失），则视为无效
+                valid_face = False
+                break
+        
+        if valid_face and len(face_indices) >= 3: # 确保至少有三个顶点构成一个面
+            valid_lines.append("f " + " ".join(map(str, face_indices)))
+            valid_faces_count +=1
+        else:
+            problematic_faces_indices.append(i)
+            # print(f"移除了无效的面: {face_parts}") # 可选的调试信息
+
+    if problematic_faces_indices:
+        print(f"警告: 在可视化前，移除了 {len(problematic_faces_indices)} 个无效的面数据。")
+
+    # 使用清理后的数据创建OBJ文件
+    cleaned_mesh_text = '\n'.join(valid_lines)
+
+    if not cleaned_mesh_text.strip() or valid_faces_count == 0:
+        print("警告: 清理后没有有效的顶点或面数据可供可视化。")
+        # 可以选择返回一个空预览或错误提示
+        # 例如，创建一个空的场景或返回一个表示错误的特殊文件路径
+        empty_scene = trimesh.Scene()
+        error_glb_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name
+        empty_scene.export(error_glb_path)
+        return error_glb_path
+
     temp_obj_path = tempfile.NamedTemporaryFile(suffix=".obj", delete=False).name
     with open(temp_obj_path, "w") as obj_file:
-        obj_file.write(mesh_text)
+        obj_file.write(cleaned_mesh_text)
 
     # 加载网格
-    mesh_object = trimesh.load_mesh(temp_obj_path)
+    try:
+        mesh_object = trimesh.load_mesh(temp_obj_path, process=False) # process=False 更快，因为我们已预处理
+        if not mesh_object.vertices.size or not mesh_object.faces.size: # 再次检查加载后的网格
+            print("警告: Trimesh加载后网格为空。")
+            empty_scene = trimesh.Scene()
+            error_glb_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name
+            empty_scene.export(error_glb_path)
+            return error_glb_path
+    except Exception as e:
+        print(f"错误: Trimesh加载网格失败: {e}")
+        # 处理加载错误，例如返回一个空的预览
+        empty_scene = trimesh.Scene()
+        error_glb_path = tempfile.NamedTemporaryFile(suffix=".glb", delete=False).name
+        empty_scene.export(error_glb_path)
+        return error_glb_path
+    finally:
+        os.remove(temp_obj_path) # 清理临时文件
 
     # === 线框生成 ===
     mesh_edges = mesh_object.edges_unique
